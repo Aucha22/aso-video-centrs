@@ -41,7 +41,7 @@ function postHeight() {
 
 async function loadData() {
   renderSkeletons();
-  const response = await fetch(`${API_URL}?v=dates-2`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+  const response = await fetch(`${API_URL}?v=dates-3`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `YouTube API kļūda (${response.status})`);
   return data;
@@ -77,7 +77,7 @@ function renderFeatured() {
   els.featuredImage.src = safeThumb(video); els.featuredImage.alt = video.title;
   els.featuredImage.onerror = () => { els.featuredImage.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`; };
   els.featuredTitle.textContent = cleanTitle(video.title);
-  els.featuredMeta.textContent = ['AŠO VIDEO', formatDate(video.archiveDate || video.publishedAt)].filter(Boolean).join(' · ');
+  els.featuredMeta.textContent = ['AŠO VIDEO', formatVideoDate(video)].filter(Boolean).join(' · ');
   els.featuredDescription.textContent = video.description || ''; els.featuredDescription.hidden = !video.description;
 }
 
@@ -85,6 +85,13 @@ function formatDate(value) {
   if (!value) return '';
   const date = new Date(value); if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('lv-LV', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+}
+
+
+function formatVideoDate(video) {
+  if (!video) return '';
+  if (video.datePrecision === 'year' && video.year) return String(video.year);
+  return formatDate(video.archiveDate || video.publishedAt);
 }
 
 function cleanTitle(title = '') {
@@ -115,7 +122,7 @@ function renderVideos() {
     image.onerror = () => { image.src = `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`; };
     duration.textContent = formatDuration(video.durationSeconds); duration.hidden = !duration.textContent;
     category.hidden = true;
-    time.textContent = formatDate(video.archiveDate || video.publishedAt) || video.year || '';
+    time.textContent = formatVideoDate(video) || video.year || '';
     time.dateTime = video.archiveDate || video.publishedAt || '';
     title.textContent = cleanTitle(video.title); button.addEventListener('click', () => openVideo(video)); els.grid.append(node);
   });
@@ -134,7 +141,7 @@ function renderShorts() {
     button.setAttribute('aria-label', `Skatīties Short: ${video.title}`); image.src = safeThumb(video); image.alt = '';
     image.onerror = () => { image.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`; };
     duration.textContent = formatDuration(video.durationSeconds); duration.hidden = !duration.textContent;
-    time.textContent = formatDate(video.archiveDate || video.publishedAt) || video.year || '';
+    time.textContent = formatVideoDate(video) || video.year || '';
     time.dateTime = video.archiveDate || video.publishedAt || '';
     title.textContent = cleanTitle(video.title); button.addEventListener('click', () => openVideo(video)); els.shortsGrid.append(node);
   });
@@ -144,7 +151,7 @@ function renderShorts() {
 function openVideo(video) {
   if (!video) return;
   els.dialogTitle.textContent = cleanTitle(video.title);
-  els.dialogMeta.textContent = [video.isShort ? 'SHORT' : 'AŠO VIDEO', formatDate(video.archiveDate || video.publishedAt)].filter(Boolean).join(' · ');
+  els.dialogMeta.textContent = [video.isShort ? 'SHORT' : 'AŠO VIDEO', formatVideoDate(video)].filter(Boolean).join(' · ');
   els.dialogLink.href = `https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}`;
   els.player.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(video.id)}?autoplay=1&rel=0" title="${escapeHtml(video.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
   if (typeof els.dialog.showModal === 'function') els.dialog.showModal(); else window.open(els.dialogLink.href, '_blank', 'noopener');

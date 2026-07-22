@@ -1,2 +1,2 @@
-DATUMS-FIX-2
-Šķiro pēc sākotnējā uploads playlistes datuma; kategorijas noņemtas; Shorts atsevišķi.
+DATUMS-FIX-3
+Datumu secība tiek noteikta no video nosaukuma un apraksta; gada video vairs netiek rādīti kā 22.07.2026.

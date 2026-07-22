@@ -1,5 +1,6 @@
 const API_ROOT = 'https://www.googleapis.com/youtube/v3';
 const EXPECTED_HANDLE = process.env.YOUTUBE_HANDLE || '@sk_ashais';
+const CURRENT_YEAR = new Date().getUTCFullYear();
 
 export default async () => {
   try {
@@ -16,14 +17,8 @@ export default async () => {
     ]);
 
     const records = new Map();
-
-    // SVARĪGI: uploads playlistes item.snippet.publishedAt ir datums,
-    // kad video tika pievienots kanāla augšupielāžu sarakstam. Tas saglabā
-    // arhīva hronoloģiju arī tad, ja vecs nerindots video šodien kļūst publisks.
     mergeUploadItems(records, uploadItems);
 
-    // Shorts paliek atsevišķā plūsmā. Ja kanālā ir publiska playliste ar
-    // nosaukumu “Shorts”, tās saturs vienmēr tiek atzīts par Shorts.
     const shortsPlaylists = playlists.filter((playlist) => isShortsPlaylist(playlist.snippet?.title || ''));
     await Promise.all(shortsPlaylists.map(async (playlist) => {
       const items = await fetchAllPlaylistItems(playlist.id, apiKey);
@@ -36,7 +31,7 @@ export default async () => {
     const all = ids
       .map((id) => buildVideo(records.get(id), metadata.get(id)))
       .filter(Boolean)
-      .sort((a, b) => dateValue(b.archiveDate) - dateValue(a.archiveDate));
+      .sort(compareVideos);
 
     const shorts = all.filter((video) => video.isShort);
     const videos = all.filter((video) => !video.isShort);
@@ -45,7 +40,8 @@ export default async () => {
 
     return json({
       generatedAt: new Date().toISOString(),
-      mode: 'uploads-original-date',
+      build: 'DATUMS-FIX-3',
+      mode: 'text-inferred-archive-date',
       channel: {
         id: channel.id,
         title: channel.snippet?.title || 'SPORTA KLUBS AŠAIS',
@@ -116,8 +112,7 @@ function mergeUploadItems(records, items) {
       title,
       description: item.snippet?.description || '',
       thumbnail: bestThumbnail(item.snippet?.thumbnails),
-      // Šis ir arhīva kārtošanas datums — nevis šodienas “Public” datums.
-      uploadedAt: item.snippet?.publishedAt || '',
+      playlistPublishedAt: item.snippet?.publishedAt || '',
       youtubePublishedAt: item.contentDetails?.videoPublishedAt || '',
       uploadPosition: Number.isFinite(item.snippet?.position) ? item.snippet.position : Number.MAX_SAFE_INTEGER,
       isShort: false,
@@ -145,6 +140,7 @@ async function fetchVideoMetadata(ids, apiKey) {
       map.set(item.id, {
         title: item.snippet?.title || '',
         description: item.snippet?.description || '',
+        tags: item.snippet?.tags || [],
         thumbnail: bestThumbnail(item.snippet?.thumbnails),
         youtubePublishedAt: item.snippet?.publishedAt || '',
         durationSeconds: isoDurationToSeconds(item.contentDetails?.duration),
@@ -163,39 +159,245 @@ function buildVideo(record, metadata) {
   if (!title || title === 'Deleted video' || title === 'Private video') return null;
 
   const description = metadata?.description || record.description || '';
-  const explicitShort = /(^|[\s#])shorts?([\s#]|$)/i.test(`${title} ${description}`);
+  const tags = Array.isArray(metadata?.tags) ? metadata.tags.join(' ') : '';
+  const explicitShort = /(^|[\s#])shorts?([\s#]|$)/i.test(`${title} ${description} ${tags}`);
   const isShort = record.isShort || explicitShort;
 
-  // Galvenā izmaiņa: arhīvā un uz kartītēm izmantojam sākotnējo uploads
-  // playlistes datumu. YouTube publiskošanas datumu glabājam tikai diagnostikai.
-  const archiveDate = record.uploadedAt || metadata?.youtubePublishedAt || record.youtubePublishedAt || '';
-  const year = archiveDate ? new Date(archiveDate).getUTCFullYear() : '';
+  const publicDate = metadata?.youtubePublishedAt || record.youtubePublishedAt || record.playlistPublishedAt || '';
+  const inferred = inferArchiveDate({
+    title,
+    description,
+    publicDate,
+    uploadPosition: record.uploadPosition,
+  });
 
   return {
     id: record.id,
     title,
     description: firstUsefulSentence(description),
     thumbnail: metadata?.thumbnail || record.thumbnail || `https://i.ytimg.com/vi/${record.id}/hqdefault.jpg`,
-    archiveDate,
-    publishedAt: archiveDate,
-    youtubePublishedAt: metadata?.youtubePublishedAt || record.youtubePublishedAt || '',
-    year,
+    archiveDate: inferred.iso,
+    publishedAt: inferred.iso,
+    youtubePublishedAt: publicDate,
+    datePrecision: inferred.precision,
+    dateSource: inferred.source,
+    year: inferred.year,
+    sortTimestamp: inferred.sortTimestamp,
+    uploadPosition: record.uploadPosition,
     durationSeconds: metadata?.durationSeconds || 0,
     isShort,
-    searchText: `${title} ${description}`,
+    searchText: `${title} ${description} ${tags}`,
+  };
+}
+
+function compareVideos(a, b) {
+  const dateDifference = Number(b.sortTimestamp || 0) - Number(a.sortTimestamp || 0);
+  if (dateDifference !== 0) return dateDifference;
+  const positionDifference = Number(a.uploadPosition ?? Number.MAX_SAFE_INTEGER) - Number(b.uploadPosition ?? Number.MAX_SAFE_INTEGER);
+  if (positionDifference !== 0) return positionDifference;
+  return String(a.title || '').localeCompare(String(b.title || ''), 'lv');
+}
+
+/**
+ * YouTube veciem nerindotiem video, kurus padara publiskus, var atdot jauno
+ * publiskošanas datumu. Tāpēc arhīva datumu vispirms mēģinām nolasīt no
+ * nosaukuma un apraksta. Nosaukums vienmēr ir prioritārs.
+ */
+export function inferArchiveDate({ title = '', description = '', publicDate = '', uploadPosition = 0 } = {}) {
+  const safeTitle = String(title);
+  const safeDescription = String(description).slice(0, 1200);
+  const publicTimestamp = dateValue(publicDate);
+  const publicYear = publicTimestamp ? new Date(publicTimestamp).getUTCFullYear() : 0;
+
+  const titleYear = extractYear(safeTitle);
+  const descriptionYear = extractYear(safeDescription);
+  const preferredYear = titleYear || descriptionYear || publicYear || CURRENT_YEAR;
+
+  const exactFromTitle = extractExactDate(safeTitle, preferredYear);
+  if (exactFromTitle) return buildDateResult(exactFromTitle, 'day', 'title-exact', uploadPosition);
+
+  const exactFromDescription = extractExactDate(safeDescription, preferredYear);
+  if (exactFromDescription) return buildDateResult(exactFromDescription, 'day', 'description-exact', uploadPosition);
+
+  const partialFromTitle = extractDayMonth(safeTitle);
+  if (partialFromTitle && preferredYear) {
+    const date = validUtcDate(preferredYear, partialFromTitle.month, partialFromTitle.day);
+    if (date) return buildDateResult(date, 'day', 'title-day-month', uploadPosition);
+  }
+
+  const partialFromDescription = extractDayMonth(safeDescription);
+  if (partialFromDescription && preferredYear) {
+    const date = validUtcDate(preferredYear, partialFromDescription.month, partialFromDescription.day);
+    if (date) return buildDateResult(date, 'day', 'description-day-month', uploadPosition);
+  }
+
+  // Gads nosaukumā ir pietiekams, lai 2024. gada video vairs nestāvētu pie
+  // 2026. gada jaunumiem. Ja nosaukumā ir tas pats gads, kas publiskošanas
+  // datumā, saglabājam precīzo YouTube datumu, jo tas var būt patiesi jauns video.
+  if (titleYear && titleYear !== publicYear) {
+    return buildYearResult(titleYear, 'title-year', uploadPosition);
+  }
+
+  if (!titleYear && descriptionYear && descriptionYear !== publicYear) {
+    return buildYearResult(descriptionYear, 'description-year', uploadPosition);
+  }
+
+  if (publicTimestamp) {
+    return {
+      iso: new Date(publicTimestamp).toISOString(),
+      year: publicYear,
+      precision: 'day',
+      source: 'youtube-public-date',
+      sortTimestamp: publicTimestamp,
+    };
+  }
+
+  const fallbackYear = titleYear || descriptionYear || CURRENT_YEAR;
+  return buildYearResult(fallbackYear, 'fallback-year', uploadPosition);
+}
+
+function extractExactDate(value, fallbackYear) {
+  const text = normalizeForDate(value);
+
+  // 2024-07-06, 2024.07.06, 2024/07/06
+  let match = text.match(/\b(20\d{2})\s*[.\/-]\s*(0?[1-9]|1[0-2])\s*[.\/-]\s*(0?[1-9]|[12]\d|3[01])\b/);
+  if (match) return validUtcDate(Number(match[1]), Number(match[2]), Number(match[3]));
+
+  // 06.07.2024, 6/7/2024, 06-07-24
+  match = text.match(/\b(0?[1-9]|[12]\d|3[01])\s*[.\/-]\s*(0?[1-9]|1[0-2])\s*[.\/-]\s*((?:20)?\d{2})\b/);
+  if (match) {
+    const year = normalizeYear(Number(match[3]));
+    return validUtcDate(year, Number(match[2]), Number(match[1]));
+  }
+
+  // 2024. gada 6. jūlijā / 2024 gada 6 julija
+  match = text.match(/\b(20\d{2})\s*\.?\s*gada\s+(0?[1-9]|[12]\d|3[01])\s*\.?\s+([a-z]+)\b/);
+  if (match) {
+    const month = monthNumber(match[3]);
+    if (month) return validUtcDate(Number(match[1]), month, Number(match[2]));
+  }
+
+  // 6. jūlijā 2024 / 6 July 2024
+  match = text.match(/\b(0?[1-9]|[12]\d|3[01])\s*\.?\s+([a-z]+)\s*,?\s*(20\d{2})\b/);
+  if (match) {
+    const month = monthNumber(match[2]);
+    if (month) return validUtcDate(Number(match[3]), month, Number(match[1]));
+  }
+
+  // July 6, 2024
+  match = text.match(/\b([a-z]+)\s+(0?[1-9]|[12]\d|3[01])\s*,?\s*(20\d{2})\b/);
+  if (match) {
+    const month = monthNumber(match[1]);
+    if (month) return validUtcDate(Number(match[3]), month, Number(match[2]));
+  }
+
+  // Ja ir zināms gads no nosaukuma, izmantojam aprakstā esošo “6. jūlijā”.
+  const partial = extractDayMonth(text);
+  if (partial && fallbackYear) return validUtcDate(fallbackYear, partial.month, partial.day);
+
+  return null;
+}
+
+function extractDayMonth(value) {
+  const text = normalizeForDate(value);
+  let match = text.match(/\b(0?[1-9]|[12]\d|3[01])\s*\.?\s+([a-z]+)\b/);
+  if (match) {
+    const month = monthNumber(match[2]);
+    if (month) return { day: Number(match[1]), month };
+  }
+
+  match = text.match(/\b([a-z]+)\s+(0?[1-9]|[12]\d|3[01])\b/);
+  if (match) {
+    const month = monthNumber(match[1]);
+    if (month) return { day: Number(match[2]), month };
+  }
+
+  return null;
+}
+
+function extractYear(value) {
+  const matches = String(value).match(/\b20\d{2}\b/g) || [];
+  for (const candidate of matches) {
+    const year = Number(candidate);
+    if (year >= 2000 && year <= CURRENT_YEAR + 1) return year;
+  }
+  return 0;
+}
+
+function normalizeForDate(value = '') {
+  return String(value)
+    .toLocaleLowerCase('lv-LV')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[“”„‟«»]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function monthNumber(word = '') {
+  const value = normalizeForDate(word);
+  const prefixes = [
+    ['janvar', 1], ['january', 1], ['jan', 1],
+    ['februar', 2], ['february', 2], ['feb', 2],
+    ['mart', 3], ['march', 3], ['mar', 3],
+    ['april', 4], ['apr', 4],
+    ['maij', 5], ['may', 5],
+    ['junij', 6], ['june', 6], ['jun', 6],
+    ['julij', 7], ['july', 7], ['jul', 7],
+    ['august', 8], ['aug', 8],
+    ['septembr', 9], ['september', 9], ['sep', 9],
+    ['oktobr', 10], ['october', 10], ['oct', 10],
+    ['novembr', 11], ['november', 11], ['nov', 11],
+    ['decembr', 12], ['december', 12], ['dec', 12],
+  ];
+  for (const [prefix, number] of prefixes) {
+    if (value.startsWith(prefix)) return number;
+  }
+  return 0;
+}
+
+function normalizeYear(year) {
+  if (year >= 2000) return year;
+  if (year >= 0 && year <= 99) return 2000 + year;
+  return year;
+}
+
+function validUtcDate(year, month, day) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (year < 2000 || year > CURRENT_YEAR + 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const timestamp = Date.UTC(year, month - 1, day, 12, 0, 0);
+  const date = new Date(timestamp);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date;
+}
+
+function buildDateResult(date, precision, source, uploadPosition) {
+  const timestamp = date.getTime();
+  return {
+    iso: date.toISOString(),
+    year: date.getUTCFullYear(),
+    precision,
+    source,
+    sortTimestamp: timestamp - Math.min(Number(uploadPosition || 0), 999999),
+  };
+}
+
+function buildYearResult(year, source, uploadPosition) {
+  // Tikai gada precizitātes video liekam gada sākumā, tātad aiz visiem tā gada
+  // video, kuriem atrasts precīzs datums. Pozīcija saglabā stabilu secību.
+  const timestamp = Date.UTC(year, 0, 1, 0, 0, 0);
+  return {
+    iso: new Date(timestamp).toISOString(),
+    year,
+    precision: 'year',
+    source,
+    sortTimestamp: timestamp - Math.min(Number(uploadPosition || 0), 999999),
   };
 }
 
 function isShortsPlaylist(title) {
-  const value = normalize(title);
+  const value = normalizeForDate(title);
   return /(^|\s)(shorts?|isie|isie klipi)(\s|$)/.test(value);
-}
-
-function normalize(value = '') {
-  return String(value)
-    .toLocaleLowerCase('lv-LV')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
 }
 
 function dateValue(value) {
@@ -242,7 +444,7 @@ async function youtube(path, params, apiKey) {
   return data;
 }
 
-function json(body, status = 200, cacheControl = 'public, max-age=60, s-maxage=120, stale-while-revalidate=300') {
+function json(body, status = 200, cacheControl = 'public, max-age=30, s-maxage=60, stale-while-revalidate=120') {
   return new Response(JSON.stringify(body), {
     status,
     headers: {

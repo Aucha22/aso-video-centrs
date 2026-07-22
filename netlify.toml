@@ -15,4 +15,4 @@
 [[headers]]
   for = "/.netlify/functions/youtube-videos"
   [headers.values]
-    Cache-Control = "public, max-age=120, s-maxage=300, stale-while-revalidate=900"
+    Cache-Control = "public, max-age=30, s-maxage=60, stale-while-revalidate=120"
