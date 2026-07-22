@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="lv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1929">
+  <meta name="description" content="Sporta kluba Ašais video arhīvs — sacensības, treniņi, nometnes, intervijas un Shorts.">
+  <title>Ašo video centrs</title>
+  <meta name="aso-video-build" content="clean-1">
+  <link rel="preconnect" href="https://i.ytimg.com">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="video-centre" id="video-centre" data-build="clean-1">
+    <header class="masthead">
+      <div class="brand-lockup" aria-label="Sporta klubs Ašais">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <div>
+          <p class="eyebrow">SPORTA KLUBS AŠAIS</p>
+          <h1>VIDEO CENTRS</h1>
+        </div>
+      </div>
+
+      <div class="channel-stat" aria-live="polite">
+        <strong><span id="video-total">—</span> <em>video</em></strong>
+        <span class="stat-dot" aria-hidden="true">•</span>
+        <strong><span id="shorts-total">—</span> <em>Shorts</em></strong>
+      </div>
+    </header>
+
+    <section class="hero" id="featured" aria-labelledby="featured-title">
+      <button class="hero-media js-featured-play" type="button" aria-label="Atskaņot jaunāko pilno video">
+        <img id="featured-image" src="" alt="" fetchpriority="high">
+        <span class="hero-shade" aria-hidden="true"></span>
+        <span class="play-button play-button--large" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </span>
+        <span class="hero-label">JAUNĀKAIS PILNAIS VIDEO</span>
+      </button>
+
+      <div class="hero-copy">
+        <p class="hero-kicker" id="featured-meta">AŠO VIDEO</p>
+        <h2 id="featured-title">Ielādējam jaunāko video…</h2>
+        <p id="featured-description" hidden></p>
+        <div class="hero-actions">
+          <button class="button button--primary js-featured-play" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            Skatīties
+          </button>
+          <a class="button button--ghost" href="https://www.youtube.com/@sk_ashais/videos" target="_blank" rel="noopener">
+            YouTube kanāls
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="library" aria-labelledby="library-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">PILNIE VIDEO</p>
+          <h2 id="library-title">Ašo arhīvs</h2>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="search-box" for="video-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+          <input id="video-search" type="search" autocomplete="off" placeholder="Meklēt: Roberts, Watford, 1500 m…">
+          <kbd>⌘ K</kbd>
+        </label>
+
+        <label class="select-wrap" for="year-filter">
+          <span class="sr-only">Atlasīt gadu</span>
+          <select id="year-filter"><option value="all">Visi gadi</option></select>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+        </label>
+      </div>
+
+      <div class="filter-row" id="category-filters" aria-label="Pilno video kategorijas"></div>
+
+      <div class="results-bar">
+        <p id="results-count" aria-live="polite">Ielādējam video…</p>
+        <button class="text-button" id="reset-filters" type="button" hidden>Notīrīt filtrus</button>
+      </div>
+
+      <div class="video-grid" id="video-grid" aria-live="polite"></div>
+
+      <div class="empty-state" id="empty-state" hidden>
+        <span>0:00</span>
+        <h3>Nekas netika atrasts.</h3>
+        <p>Pamēģini citu sportista vārdu, sacensību nosaukumu vai gadu.</p>
+        <button class="button button--dark" id="empty-reset" type="button">Rādīt visus video</button>
+      </div>
+
+      <div class="load-more-wrap">
+        <button class="button button--dark" id="load-more" type="button" hidden>Rādīt vēl <span id="remaining-count"></span></button>
+      </div>
+    </section>
+
+    <section class="shorts-section" id="shorts-section" aria-labelledby="shorts-title" hidden>
+      <div class="section-heading section-heading--shorts">
+        <div>
+          <p class="eyebrow">ATSEVIŠĶA PLŪSMA</p>
+          <h2 id="shorts-title">Ašo Shorts</h2>
+        </div>
+        <p class="section-note">Shorts nekad netiek jaukti pilno video arhīvā.</p>
+      </div>
+
+      <div class="shorts-grid" id="shorts-grid" aria-live="polite"></div>
+      <div class="load-more-wrap">
+        <button class="button button--dark" id="shorts-load-more" type="button" hidden>Rādīt vēl Shorts <span id="shorts-remaining-count"></span></button>
+      </div>
+    </section>
+
+    <div class="system-message" id="system-message" hidden>
+      <div>
+        <strong id="system-message-title"></strong>
+        <p id="system-message-text"></p>
+      </div>
+    </div>
+
+    <footer class="centre-footer">
+      <p>Vienkārši — vieglatlētika.</p>
+      <a href="https://www.youtube.com/@sk_ashais?sub_confirmation=1" target="_blank" rel="noopener">Abonēt Ašo kanālu</a>
+    </footer>
+  </main>
+
+  <dialog class="video-dialog" id="video-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-shell">
+      <button class="dialog-close" id="dialog-close" type="button" aria-label="Aizvērt video">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <div class="player-wrap" id="player-wrap"></div>
+      <div class="dialog-copy">
+        <p class="eyebrow" id="dialog-meta">AŠO VIDEO</p>
+        <h2 id="dialog-title"></h2>
+        <a id="dialog-youtube-link" href="#" target="_blank" rel="noopener">Atvērt YouTube ↗</a>
+      </div>
+    </div>
+  </dialog>
+
+  <template id="video-card-template">
+    <article class="video-card">
+      <button class="card-media" type="button">
+        <img src="" alt="" loading="lazy">
+        <span class="card-shade" aria-hidden="true"></span>
+        <span class="play-button" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>
+        <span class="duration"></span>
+      </button>
+      <div class="card-copy">
+        <div class="card-meta"><span class="card-category"></span><time></time></div>
+        <h3></h3>
+      </div>
+    </article>
+  </template>
+
+  <template id="short-card-template">
+    <article class="short-card">
+      <button class="short-media" type="button">
+        <img src="" alt="" loading="lazy">
+        <span class="short-shade" aria-hidden="true"></span>
+        <span class="short-badge">SHORT</span>
+        <span class="play-button" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>
+        <span class="duration"></span>
+      </button>
+      <div class="short-copy"><time></time><h3></h3></div>
+    </article>
+  </template>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
