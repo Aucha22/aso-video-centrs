@@ -1,8 +1,6 @@
 const API_ROOT = 'https://www.googleapis.com/youtube/v3';
 const EXPECTED_HANDLE = process.env.YOUTUBE_HANDLE || '@sk_ashais';
 
-const CATEGORY_ORDER = ['Sacensības', 'Treniņi', 'Nometnes', 'Intervijas', 'Kluba dzīve', 'Citi'];
-
 export default async () => {
   try {
     const apiKey = process.env.YOUTUBE_API_KEY || '';
@@ -19,25 +17,17 @@ export default async () => {
 
     const records = new Map();
 
-    // Publiskie video — lai arhīvs nav tukšs arī pirms visu playlisšu sakārtošanas.
-    mergePlaylistItems(records, uploadItems, { category: 'Citi', isShort: false, source: 'uploads' });
+    // SVARĪGI: uploads playlistes item.snippet.publishedAt ir datums,
+    // kad video tika pievienots kanāla augšupielāžu sarakstam. Tas saglabā
+    // arhīva hronoloģiju arī tad, ja vecs nerindots video šodien kļūst publisks.
+    mergeUploadItems(records, uploadItems);
 
-    const recognisedPlaylists = playlists
-      .map((playlist) => ({
-        id: playlist.id,
-        title: playlist.snippet?.title || '',
-        classification: classifyPlaylist(playlist.snippet?.title || ''),
-      }))
-      .filter((playlist) => playlist.classification);
-
-    // Playlists ir vienīgais kategoriju avots. Nekādas minēšanas pēc video teksta.
-    await Promise.all(recognisedPlaylists.map(async (playlist) => {
+    // Shorts paliek atsevišķā plūsmā. Ja kanālā ir publiska playliste ar
+    // nosaukumu “Shorts”, tās saturs vienmēr tiek atzīts par Shorts.
+    const shortsPlaylists = playlists.filter((playlist) => isShortsPlaylist(playlist.snippet?.title || ''));
+    await Promise.all(shortsPlaylists.map(async (playlist) => {
       const items = await fetchAllPlaylistItems(playlist.id, apiKey);
-      mergePlaylistItems(records, items, {
-        category: playlist.classification.category,
-        isShort: playlist.classification.isShort,
-        source: playlist.title,
-      });
+      markShorts(records, items);
     }));
 
     const ids = [...records.keys()];
@@ -46,30 +36,22 @@ export default async () => {
     const all = ids
       .map((id) => buildVideo(records.get(id), metadata.get(id)))
       .filter(Boolean)
-      .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+      .sort((a, b) => dateValue(b.archiveDate) - dateValue(a.archiveDate));
 
     const shorts = all.filter((video) => video.isShort);
     const videos = all.filter((video) => !video.isShort);
     const featuredId = process.env.FEATURED_VIDEO_ID || '';
     const featured = videos.find((video) => video.id === featuredId) || videos[0] || null;
 
-    const foundCategories = new Set(videos.flatMap((video) => video.categories || []));
-    const missingPlaylists = ['Sacensības', 'Treniņi', 'Nometnes', 'Intervijas', 'Kluba dzīve', 'Shorts']
-      .filter((name) => name === 'Shorts'
-        ? !recognisedPlaylists.some((p) => p.classification.isShort)
-        : !recognisedPlaylists.some((p) => p.classification.category === name));
-
     return json({
       generatedAt: new Date().toISOString(),
-      mode: 'playlists',
+      mode: 'uploads-original-date',
       channel: {
         id: channel.id,
         title: channel.snippet?.title || 'SPORTA KLUBS AŠAIS',
         handle: channel.snippet?.customUrl || EXPECTED_HANDLE,
       },
       counts: { videos: videos.length, shorts: shorts.length, total: all.length },
-      categories: CATEGORY_ORDER.filter((category) => foundCategories.has(category)),
-      missingPlaylists,
       featured,
       videos,
       shorts,
@@ -96,7 +78,7 @@ async function fetchChannelPlaylists(channelId, apiKey) {
   let pageToken = '';
   do {
     const data = await youtube('/playlists', {
-      part: 'snippet,status,contentDetails',
+      part: 'snippet',
       channelId,
       maxResults: '50',
       pageToken,
@@ -123,37 +105,30 @@ async function fetchAllPlaylistItems(playlistId, apiKey) {
   return items;
 }
 
-function mergePlaylistItems(records, items, classification) {
+function mergeUploadItems(records, items) {
   for (const item of items) {
     const id = videoIdFromItem(item);
     const title = item.snippet?.title || '';
     if (!id || !title || title === 'Deleted video' || title === 'Private video') continue;
 
-    const current = records.get(id) || {
+    records.set(id, {
       id,
       title,
       description: item.snippet?.description || '',
       thumbnail: bestThumbnail(item.snippet?.thumbnails),
-      publishedAt: item.contentDetails?.videoPublishedAt || item.snippet?.publishedAt || '',
-      categories: new Set(),
+      // Šis ir arhīva kārtošanas datums — nevis šodienas “Public” datums.
+      uploadedAt: item.snippet?.publishedAt || '',
+      youtubePublishedAt: item.contentDetails?.videoPublishedAt || '',
+      uploadPosition: Number.isFinite(item.snippet?.position) ? item.snippet.position : Number.MAX_SAFE_INTEGER,
       isShort: false,
-      sources: new Set(),
-    };
+    });
+  }
+}
 
-    if (!current.title && title) current.title = title;
-    if (!current.description && item.snippet?.description) current.description = item.snippet.description;
-    if (!current.thumbnail) current.thumbnail = bestThumbnail(item.snippet?.thumbnails);
-    if (!current.publishedAt) current.publishedAt = item.contentDetails?.videoPublishedAt || item.snippet?.publishedAt || '';
-
-    if (classification.isShort) {
-      current.isShort = true;
-      current.categories.delete('Citi');
-    } else if (!current.isShort && classification.category) {
-      if (classification.category !== 'Citi') current.categories.delete('Citi');
-      current.categories.add(classification.category);
-    }
-    current.sources.add(classification.source);
-    records.set(id, current);
+function markShorts(records, items) {
+  for (const item of items) {
+    const id = videoIdFromItem(item);
+    if (id && records.has(id)) records.get(id).isShort = true;
   }
 }
 
@@ -171,7 +146,7 @@ async function fetchVideoMetadata(ids, apiKey) {
         title: item.snippet?.title || '',
         description: item.snippet?.description || '',
         thumbnail: bestThumbnail(item.snippet?.thumbnails),
-        publishedAt: item.snippet?.publishedAt || '',
+        youtubePublishedAt: item.snippet?.publishedAt || '',
         durationSeconds: isoDurationToSeconds(item.contentDetails?.duration),
         privacyStatus: item.status?.privacyStatus || '',
       });
@@ -187,43 +162,33 @@ function buildVideo(record, metadata) {
   const title = metadata?.title || record.title || '';
   if (!title || title === 'Deleted video' || title === 'Private video') return null;
 
-  // Shorts playlist wins. Optional fallback catches only explicitly tagged Shorts.
-  const explicitShort = /(^|[\s#])shorts?([\s#]|$)/i.test(`${title} ${metadata?.description || record.description || ''}`);
+  const description = metadata?.description || record.description || '';
+  const explicitShort = /(^|[\s#])shorts?([\s#]|$)/i.test(`${title} ${description}`);
   const isShort = record.isShort || explicitShort;
 
-  const categories = [...record.categories];
-  if (!isShort && categories.length === 0) categories.push('Citi');
-  categories.sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b));
-
-  const publishedAt = metadata?.publishedAt || record.publishedAt || '';
-  const year = publishedAt ? new Date(publishedAt).getUTCFullYear() : '';
-  const description = metadata?.description || record.description || '';
+  // Galvenā izmaiņa: arhīvā un uz kartītēm izmantojam sākotnējo uploads
+  // playlistes datumu. YouTube publiskošanas datumu glabājam tikai diagnostikai.
+  const archiveDate = record.uploadedAt || metadata?.youtubePublishedAt || record.youtubePublishedAt || '';
+  const year = archiveDate ? new Date(archiveDate).getUTCFullYear() : '';
 
   return {
     id: record.id,
     title,
     description: firstUsefulSentence(description),
     thumbnail: metadata?.thumbnail || record.thumbnail || `https://i.ytimg.com/vi/${record.id}/hqdefault.jpg`,
-    publishedAt,
+    archiveDate,
+    publishedAt: archiveDate,
+    youtubePublishedAt: metadata?.youtubePublishedAt || record.youtubePublishedAt || '',
     year,
     durationSeconds: metadata?.durationSeconds || 0,
     isShort,
-    categories: isShort ? [] : categories,
-    category: isShort ? 'Shorts' : (categories[0] || 'Citi'),
-    searchText: `${title} ${description} ${categories.join(' ')}`,
+    searchText: `${title} ${description}`,
   };
 }
 
-function classifyPlaylist(title) {
+function isShortsPlaylist(title) {
   const value = normalize(title);
-  if (/\b(shorts?|isie|isie klipi)\b/.test(value)) return { isShort: true, category: 'Shorts' };
-  if (/sacens|mac[iī]|čempionat|kauss|skrējiens|stadion/.test(value)) return { isShort: false, category: 'Sacensības' };
-  if (/treni|workout|interval/.test(value)) return { isShort: false, category: 'Treniņi' };
-  if (/nometn|camp/.test(value)) return { isShort: false, category: 'Nometnes' };
-  if (/interv|sarun|podkast/.test(value)) return { isShort: false, category: 'Intervijas' };
-  if (/kluba dzive|aso dzive|komanda|pasakum|aizkul/.test(value)) return { isShort: false, category: 'Kluba dzīve' };
-  if (/\bciti\b|arhivs/.test(value)) return { isShort: false, category: 'Citi' };
-  return null;
+  return /(^|\s)(shorts?|isie|isie klipi)(\s|$)/.test(value);
 }
 
 function normalize(value = '') {
@@ -231,6 +196,11 @@ function normalize(value = '') {
     .toLocaleLowerCase('lv-LV')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function dateValue(value) {
+  const time = Date.parse(value || '');
+  return Number.isFinite(time) ? time : 0;
 }
 
 function videoIdFromItem(item) {
@@ -272,7 +242,7 @@ async function youtube(path, params, apiKey) {
   return data;
 }
 
-function json(body, status = 200, cacheControl = 'public, max-age=120, s-maxage=300, stale-while-revalidate=900') {
+function json(body, status = 200, cacheControl = 'public, max-age=60, s-maxage=120, stale-while-revalidate=300') {
   return new Response(JSON.stringify(body), {
     status,
     headers: {

@@ -1,1 +1,2 @@
-CLEAN-1
+DATUMS-FIX-2
+Šķiro pēc sākotnējā uploads playlistes datuma; kategorijas noņemtas; Shorts atsevišķi.
